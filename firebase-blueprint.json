@@ -1,0 +1,42 @@
+{
+  "collections": [
+    {
+      "name": "users",
+      "description": "User profiles and settings",
+      "documents": {
+        "fields": [
+          { "name": "uid", "type": "string", "description": "Firebase Auth UID" },
+          { "name": "email", "type": "string", "description": "User email address" },
+          { "name": "displayName", "type": "string", "description": "User's full name" },
+          { "name": "role", "type": "string", "description": "User role (admin, user)" },
+          { "name": "createdAt", "type": "timestamp" }
+        ]
+      }
+    },
+    {
+      "name": "projects",
+      "description": "Team projects",
+      "documents": {
+        "fields": [
+          { "name": "name", "type": "string", "description": "Project name" },
+          { "name": "description", "type": "string" },
+          { "name": "ownerId", "type": "string", "description": "User ID of the project owner" },
+          { "name": "createdAt", "type": "timestamp" }
+        ]
+      }
+    },
+    {
+      "name": "tasks",
+      "description": "Tasks within projects",
+      "documents": {
+        "fields": [
+          { "name": "projectId", "type": "string", "description": "Reference to parent project" },
+          { "name": "title", "type": "string" },
+          { "name": "status", "type": "string", "description": "todo, in_progress, done" },
+          { "name": "assigneeId", "type": "string", "description": "User ID of assignee (optional)" },
+          { "name": "createdAt", "type": "timestamp" }
+        ]
+      }
+    }
+  ]
+}

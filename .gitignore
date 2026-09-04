@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+firebase-applet-config.json
+firebase-key.json
+dist/
+uploads/
+coverage/
+.DS_Store
