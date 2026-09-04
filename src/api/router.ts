@@ -6,9 +6,11 @@ import multer from "multer";
 import { healthCheck } from "./handler/health.js";
 import { requestLogger } from "./middleware/logger.js";
 import { requireAuth } from "./middleware/auth.js";
+import { validate } from "./middleware/validate.js";
+import { createProjectSchema, updateProjectSchema, addProjectCommentSchema, setProjectResultSchema, createTaskSchema, updateTaskSchema, createCompetitionSchema } from "./validation/schemas.js";
 import { createProject, listProjects, getProject, updateProject, deleteProject, addProjectComment, setProjectResult } from "./handler/project.js";
 import { getMe, listUsers } from "./handler/user.js";
-import { createCompetition, listCompetitions, getCompetition } from "./handler/competition.js";
+import { createCompetition, listCompetitions, getCompetition, updateCompetition, deleteCompetition } from "./handler/competition.js";
 import { createTask, listTasks, getTask, updateTask, deleteTask, addTaskComment } from "./handler/task.js";
 import { getCalendarEvents } from "./handler/calendar.js";
 import { getUrgentItems } from "./handler/urgent.js";
@@ -16,6 +18,8 @@ import { generatePresignedUrl, handleUpload, listFiles, downloadFile } from "./h
 import { listNotifications, markAsRead, markAllAsRead, triggerDeadlineChecks } from "./handler/notification.js";
 import { getAnalytics } from "./handler/analytics.js";
 import { triggerScraper } from "./handler/scraper.js";
+import { authRouter } from "./routes/auth.js";
+import { teamRouter } from "./routes/team.js";
 
 // File upload validation (Phase 16)
 const upload = multer({ 
@@ -75,31 +79,39 @@ export const createRouter = () => {
   // Calendar (Phase 9)
   router.get("/api/v1/calendar", requireAuth, getCalendarEvents);
 
+  // Auth Routes
+  router.use("/api/v1/auth", authRouter);
+
   // Users (Phase 3)
   router.get("/api/v1/users/me", requireAuth, getMe);
   router.get("/api/v1/users", requireAuth, listUsers);
 
   // Competitions (Phase 6)
-  router.post("/api/v1/competitions", requireAuth, createCompetition);
+  router.post("/api/v1/competitions", requireAuth, validate(createCompetitionSchema), createCompetition);
   router.get("/api/v1/competitions", requireAuth, listCompetitions);
   router.get("/api/v1/competitions/:id", requireAuth, getCompetition);
+  router.put("/api/v1/competitions/:id", requireAuth, updateCompetition);
+  router.delete("/api/v1/competitions/:id", requireAuth, deleteCompetition);
 
   // Projects (Phase 7 & 11)
-  router.post("/api/v1/projects", requireAuth, createProject);
+  router.post("/api/v1/projects", requireAuth, validate(createProjectSchema), createProject);
   router.get("/api/v1/projects", requireAuth, listProjects);
   router.get("/api/v1/projects/:id", requireAuth, getProject);
-  router.put("/api/v1/projects/:id", requireAuth, updateProject);
+  router.put("/api/v1/projects/:id", requireAuth, validate(updateProjectSchema), updateProject);
   router.delete("/api/v1/projects/:id", requireAuth, deleteProject);
-  router.post("/api/v1/projects/:id/comments", requireAuth, addProjectComment); // Phase 11
-  router.post("/api/v1/projects/:id/result", requireAuth, setProjectResult); // Phase 13
+  router.post("/api/v1/projects/:id/comments", requireAuth, validate(addProjectCommentSchema), addProjectComment); // Phase 11
+  router.post("/api/v1/projects/:id/result", requireAuth, validate(setProjectResultSchema), setProjectResult); // Phase 13
+
+  // Teams (Phase 7 / Members)
+  router.use("/api/v1/projects", teamRouter);
 
   // Tasks (Phase 8 & 11)
-  router.post("/api/v1/tasks", requireAuth, createTask);
+  router.post("/api/v1/tasks", requireAuth, validate(createTaskSchema), createTask);
   router.get("/api/v1/tasks", requireAuth, listTasks);
   router.get("/api/v1/tasks/:id", requireAuth, getTask);
-  router.put("/api/v1/tasks/:id", requireAuth, updateTask);
+  router.put("/api/v1/tasks/:id", requireAuth, validate(updateTaskSchema), updateTask);
   router.delete("/api/v1/tasks/:id", requireAuth, deleteTask);
-  router.post("/api/v1/tasks/:id/comments", requireAuth, addTaskComment);
+  router.post("/api/v1/tasks/:id/comments", requireAuth, validate(addProjectCommentSchema), addTaskComment);
 
   // Files (Phase 11)
   router.post("/api/v1/files/presigned", requireAuth, generatePresignedUrl);

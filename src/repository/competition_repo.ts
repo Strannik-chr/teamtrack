@@ -1,98 +1,126 @@
-import { db } from "../pkg/firebase/admin.js";
-import { Filter } from "firebase-admin/firestore";
-
-export type CompetitionType = "competition" | "grant" | "hackathon" | "tournament" | "olympiad" | "forum" | "accelerator" | "championship" | "other";
-
-export interface Competition {
-  id?: string;
-  title: string;
-  organizer: string;
-  type: CompetitionType;
-  official_url: string;
-  deadline?: Date;
-  start_at?: Date;
-  result_at?: Date;
-  prize_fund?: string;
-  source_id?: string;
-  status: "published" | "draft" | "archived";
-  created_at: Date;
-  updated_at: Date;
-}
-
-export interface CompetitionQuery {
-  type?: CompetitionType;
-  status?: string;
-  limit?: number;
-  offset?: string; // Using document ID for cursor-based pagination
-}
+import { db } from "../db/index.js";
+import { competitions } from "../db/schema.js";
+import { eq, desc, and } from "drizzle-orm";
 
 export class CompetitionRepository {
-  private collection = db.collection("competitions");
+  async create(data: any): Promise<any> {
+    const [newComp] = await db.insert(competitions).values({
+      title: data.title,
+      description: data.description || "",
+      organizer: data.organizer || "",
+      type: data.type || "other",
+      url: data.official_url || "",
+      source: data.source || null,
+      sourceId: data.source_id || null,
+      deadline: data.deadline ? new Date(data.deadline) : null,
+      startAt: data.start_at ? new Date(data.start_at) : null,
+      resultAt: data.result_at ? new Date(data.result_at) : null,
+      prizeFund: data.prize_fund || null,
+      status: data.status || "published",
+    }).returning();
+    
+    return this.mapCompetition(newComp);
+  }
 
-  async create(competition: Omit<Competition, "id" | "created_at" | "updated_at">): Promise<Competition> {
-    const now = new Date();
-    const docRef = await this.collection.add({
-      ...competition,
-      created_at: now,
-      updated_at: now,
+  async findById(id: string): Promise<any> {
+    const comp = await db.query.competitions.findFirst({
+      where: eq(competitions.id, id),
     });
-    return { id: docRef.id, ...competition, created_at: now, updated_at: now };
+    
+    if (!comp) return null;
+    return this.mapCompetition(comp);
   }
 
-  async findById(id: string): Promise<Competition | null> {
-    const doc = await this.collection.doc(id).get();
-    if (!doc.exists) return null;
-    return { id: doc.id, ...doc.data() } as Competition;
+  async findBySourceId(sourceId: string): Promise<any> {
+    const comp = await db.query.competitions.findFirst({
+      where: eq(competitions.sourceId, sourceId),
+    });
+    
+    if (!comp) return null;
+    return this.mapCompetition(comp);
   }
 
-  async findBySourceId(sourceId: string): Promise<Competition | null> {
-    const snapshot = await this.collection.where("source_id", "==", sourceId).limit(1).get();
-    if (snapshot.empty) return null;
-    const doc = snapshot.docs[0];
-    return { id: doc.id, ...doc.data() } as Competition;
-  }
-
-
-  async list(query?: CompetitionQuery): Promise<{ data: Competition[], nextCursor?: string }> {
-    let queryRef: FirebaseFirestore.Query = this.collection.orderBy("created_at", "desc");
+  async list(query?: any): Promise<{ data: any[], nextCursor?: string }> {
+    const limit = query?.limit || 20;
+    
+    let whereClause = undefined;
+    const conditions = [];
 
     if (query?.type) {
-      queryRef = queryRef.where("type", "==", query.type);
+      conditions.push(eq(competitions.type, query.type));
     }
     if (query?.status) {
-      queryRef = queryRef.where("status", "==", query.status);
+      conditions.push(eq(competitions.status, query.status));
     }
 
-    // Apply pagination
-    const limit = query?.limit || 20;
-    queryRef = queryRef.limit(limit);
-
-    if (query?.offset) {
-      const cursorDoc = await this.collection.doc(query.offset).get();
-      if (cursorDoc.exists) {
-        queryRef = queryRef.startAfter(cursorDoc);
-      }
+    if (conditions.length > 0) {
+      whereClause = and(...conditions);
     }
 
-    const snapshot = await queryRef.get();
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Competition);
+    // Offset-based pagination instead of cursor-based for simplicity with Drizzle for now, 
+    // or just omit offset for now since it was cursor-based in firestore
+    const offset = query?.offset ? parseInt(query.offset, 10) : 0;
+    const isCursor = query?.offset && !isNaN(offset);
+    const parsedOffset = isCursor ? offset : 0;
+
+    const comps = await db.query.competitions.findMany({
+      where: whereClause,
+      orderBy: [desc(competitions.createdAt)],
+      limit: limit,
+      offset: parsedOffset
+    });
+
+    const data = comps.map((c: any) => this.mapCompetition(c));
     
     let nextCursor = undefined;
     if (data.length === limit) {
-      nextCursor = data[data.length - 1].id;
+      nextCursor = (parsedOffset + limit).toString();
     }
 
     return { data, nextCursor };
   }
 
-  async update(id: string, updates: Partial<Competition>): Promise<void> {
-    await this.collection.doc(id).update({
-      ...updates,
-      updated_at: new Date()
-    });
+  async update(id: string, updates: any): Promise<void> {
+    const dbUpdates: any = { updatedAt: new Date() };
+    if (updates.title !== undefined) dbUpdates.title = updates.title;
+    if (updates.description !== undefined) dbUpdates.description = updates.description;
+    if (updates.organizer !== undefined) dbUpdates.organizer = updates.organizer;
+    if (updates.type !== undefined) dbUpdates.type = updates.type;
+    if (updates.official_url !== undefined) dbUpdates.url = updates.official_url;
+    if (updates.source_id !== undefined) dbUpdates.sourceId = updates.source_id;
+    if (updates.status !== undefined) dbUpdates.status = updates.status;
+    if (updates.deadline !== undefined) dbUpdates.deadline = updates.deadline ? new Date(updates.deadline) : null;
+    if (updates.start_at !== undefined) dbUpdates.startAt = updates.start_at ? new Date(updates.start_at) : null;
+    if (updates.result_at !== undefined) dbUpdates.resultAt = updates.result_at ? new Date(updates.result_at) : null;
+    if (updates.prize_fund !== undefined) dbUpdates.prizeFund = updates.prize_fund;
+
+    if (Object.keys(dbUpdates).length > 1) {
+      await db.update(competitions).set(dbUpdates).where(eq(competitions.id, id));
+    }
   }
 
   async delete(id: string): Promise<void> {
-    await this.collection.doc(id).delete();
+    await db.delete(competitions).where(eq(competitions.id, id));
+  }
+
+  private mapCompetition(c: any) {
+    if (!c) return null;
+    return {
+      id: c.id,
+      title: c.title,
+      description: c.description,
+      organizer: c.organizer,
+      type: c.type,
+      official_url: c.url,
+      source: c.source,
+      source_id: c.sourceId,
+      deadline: c.deadline,
+      start_at: c.startAt,
+      result_at: c.resultAt,
+      prize_fund: c.prizeFund,
+      status: c.status,
+      created_at: c.createdAt,
+      updated_at: c.updatedAt,
+    };
   }
 }

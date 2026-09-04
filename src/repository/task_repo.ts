@@ -1,62 +1,112 @@
-import { db } from "../pkg/firebase/admin.js";
-
-export type TaskStatus = "todo" | "in_progress" | "review" | "done";
-export type TaskPriority = "high" | "medium" | "low";
-
-export interface TaskComment {
-  id?: string;
-  userId: string;
-  text: string;
-  mentions?: string[]; // array of user UIDs mentioned
-  createdAt: Date;
-}
-
-export interface Task {
-  id?: string;
-  projectId: string;
-  title: string;
-  description: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  assigneeId?: string;
-  deadline?: Date;
-  comments: TaskComment[];
-  createdAt: Date;
-  updatedAt: Date;
-}
+import { db } from "../db/index.js";
+import { tasks, taskComments, users } from "../db/schema.js";
+import { eq, desc } from "drizzle-orm";
 
 export class TaskRepository {
-  private collection = db.collection("tasks");
+  async create(data: any): Promise<any> {
+    const [newTask] = await db.insert(tasks).values({
+      projectId: data.projectId,
+      title: data.title,
+      description: data.description || "",
+      status: data.status || "TODO",
+      priority: data.priority || "medium",
+      assigneeId: data.assigneeId || null,
+      deadline: data.deadline ? new Date(data.deadline) : null,
+    }).returning();
+    
+    return this.findById(newTask.id);
+  }
 
-  async create(task: Omit<Task, "id" | "createdAt" | "updatedAt">): Promise<Task> {
-    const now = new Date();
-    const docRef = await this.collection.add({
-      ...task,
-      createdAt: now,
-      updatedAt: now,
+  async findById(id: string): Promise<any> {
+    const task = await db.query.tasks.findFirst({
+      where: eq(tasks.id, id),
+      with: {
+        assignee: true,
+        comments: {
+          with: { user: true }
+        }
+      }
     });
-    return { id: docRef.id, ...task, createdAt: now, updatedAt: now };
+    
+    if (!task) return null;
+    return this.mapTask(task);
   }
 
-  async findById(id: string): Promise<Task | null> {
-    const doc = await this.collection.doc(id).get();
-    if (!doc.exists) return null;
-    return { id: doc.id, ...doc.data() } as Task;
-  }
+  async listByProject(projectId: string, filters?: { status?: string, assigneeId?: string }): Promise<any[]> {
+    let whereClause: any = eq(tasks.projectId, projectId);
+    
+    if (filters?.status || filters?.assigneeId) {
+      const conditions = [whereClause];
+      if (filters.status) conditions.push(eq(tasks.status, filters.status as any));
+      if (filters.assigneeId) conditions.push(eq(tasks.assigneeId, filters.assigneeId));
+      
+      const { and } = await import("drizzle-orm");
+      whereClause = and(...conditions);
+    }
 
-  async listByProject(projectId: string): Promise<Task[]> {
-    const snapshot = await this.collection.where("projectId", "==", projectId).orderBy("createdAt", "desc").get();
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Task);
-  }
-
-  async update(id: string, updates: Partial<Task>): Promise<void> {
-    await this.collection.doc(id).update({
-      ...updates,
-      updatedAt: new Date(),
+    const projectTasks = await db.query.tasks.findMany({
+      where: whereClause,
+      orderBy: [desc(tasks.createdAt)],
+      with: {
+        assignee: true,
+        comments: {
+          with: { user: true }
+        }
+      }
     });
+
+    return projectTasks.map((t: any) => this.mapTask(t));
+  }
+
+  async update(id: string, updates: any): Promise<void> {
+    const dbUpdates: any = { updatedAt: new Date() };
+    if (updates.title !== undefined) dbUpdates.title = updates.title;
+    if (updates.description !== undefined) dbUpdates.description = updates.description;
+    if (updates.status !== undefined) dbUpdates.status = updates.status;
+    if (updates.priority !== undefined) dbUpdates.priority = updates.priority;
+    if (updates.deadline !== undefined) dbUpdates.deadline = updates.deadline ? new Date(updates.deadline) : null;
+    if (updates.assigneeId !== undefined) dbUpdates.assigneeId = updates.assigneeId;
+
+    if (Object.keys(dbUpdates).length > 1) {
+      await db.update(tasks).set(dbUpdates).where(eq(tasks.id, id));
+    }
   }
 
   async delete(id: string): Promise<void> {
-    await this.collection.doc(id).delete();
+    await db.delete(tasks).where(eq(tasks.id, id));
+  }
+
+  async addComment(taskId: string, userId: string, text: string, mentions?: string[]): Promise<any> {
+    const [comment] = await db.insert(taskComments).values({
+      taskId,
+      userId,
+      text,
+      mentions: mentions || [],
+    }).returning();
+    
+    return comment;
+  }
+
+  private mapTask(t: any) {
+    if (!t) return null;
+    return {
+      id: t.id,
+      projectId: t.projectId,
+      title: t.title,
+      description: t.description,
+      status: t.status,
+      priority: t.priority,
+      assigneeId: t.assigneeId,
+      deadline: t.deadline,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+      comments: t.comments?.map((c: any) => ({
+        id: c.id,
+        userId: c.userId,
+        text: c.text,
+        mentions: c.mentions,
+        createdAt: c.createdAt
+      })) || []
+    };
   }
 }

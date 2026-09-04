@@ -3,9 +3,20 @@ import { createServer } from "node:http";
 import { config } from "./src/config/config.js";
 import { logger } from "./src/pkg/logger/logger.js";
 import { createRouter } from "./src/api/router.js";
+import path from "path";
+import fs from "fs";
 
 const app = express();
 app.use("/", createRouter());
+
+// Serve static frontend in production
+const clientPath = path.join(process.cwd(), "dist/client");
+if (fs.existsSync(clientPath)) {
+  app.use(express.static(clientPath));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(clientPath, "index.html"));
+  });
+}
 
 const server = createServer(app);
 

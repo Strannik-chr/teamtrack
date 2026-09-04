@@ -21,13 +21,13 @@ export interface CalendarEvent {
 
 export const getCalendarEvents = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user?.uid;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
 
     const events: CalendarEvent[] = [];
     
     // 1. Fetch user projects
-    const projects = await projectRepo.listByMember(userId);
+    const projects = await projectRepo.listByUser(userId);
 
     // Prepare competition set for batch fetch
     const compIds = new Set<string>();
@@ -42,19 +42,20 @@ export const getCalendarEvents = async (req: AuthRequest, res: Response) => {
           id: `proj_start_${project.id}`,
           title: `Start: ${project.name}`,
           type: "project_start",
-          date: project.start_at,
+          date: new Date(project.start_at),
           statusColor: "blue",
           referenceId: project.id!
         });
       }
 
       if (project.deadline_at) {
+        const deadlineDate = new Date(project.deadline_at);
         events.push({
           id: `proj_end_${project.id}`,
           title: `Deadline: ${project.name}`,
           type: "project_deadline",
-          date: project.deadline_at,
-          statusColor: calculateDeadlineStatus(project.deadline_at, isProjectDone),
+          date: deadlineDate,
+          statusColor: calculateDeadlineStatus(deadlineDate, isProjectDone),
           referenceId: project.id!
         });
       }
@@ -63,14 +64,15 @@ export const getCalendarEvents = async (req: AuthRequest, res: Response) => {
       const tasks = await taskRepo.listByProject(project.id!);
       for (const task of tasks) {
         if (task.deadline) {
-          const isTaskDone = task.status === "done";
+          const isTaskDone = task.status === "DONE";
+          const taskDeadlineDate = new Date(task.deadline);
           // Only show task deadlines if assigned to current user, or maybe all tasks in project? Let's show all tasks in the project for overview.
           events.push({
             id: `task_${task.id}`,
             title: `Task: ${task.title}`,
             type: "task_deadline",
-            date: task.deadline,
-            statusColor: calculateDeadlineStatus(task.deadline, isTaskDone),
+            date: taskDeadlineDate,
+            statusColor: calculateDeadlineStatus(taskDeadlineDate, isTaskDone),
             referenceId: task.id!
           });
         }
@@ -86,19 +88,20 @@ export const getCalendarEvents = async (req: AuthRequest, res: Response) => {
             id: `comp_start_${comp.id}`,
             title: `Comp Start: ${comp.title}`,
             type: "competition_start",
-            date: comp.start_at,
+            date: new Date(comp.start_at),
             statusColor: "blue",
             referenceId: comp.id!
           });
         }
         if (comp.deadline) {
+          const compDeadlineDate = new Date(comp.deadline);
           // Assume competition deadline is just informational (gray/green depending on date, but not actionable by team status natively, though we could use the deadline logic).
           events.push({
             id: `comp_end_${comp.id}`,
             title: `Comp Deadline: ${comp.title}`,
             type: "competition_deadline",
-            date: comp.deadline,
-            statusColor: calculateDeadlineStatus(comp.deadline, false),
+            date: compDeadlineDate,
+            statusColor: calculateDeadlineStatus(compDeadlineDate, false),
             referenceId: comp.id!
           });
         }
@@ -108,9 +111,9 @@ export const getCalendarEvents = async (req: AuthRequest, res: Response) => {
     // Sort events by date ascending
     events.sort((a, b) => a.date.getTime() - b.date.getTime());
 
-    res.status(200).json(events);
+    res.status(200).json({ success: true, data: events });
   } catch (error) {
     logger.error("Failed to get calendar events", { error });
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });
   }
 };

@@ -1,9 +1,17 @@
 import { Request, Response, NextFunction } from "express";
-import { auth } from "../../pkg/firebase/admin.js";
 import { logger } from "../../pkg/logger/logger.js";
+import jwt from "jsonwebtoken";
+import { config } from "../../config/config.js";
+import { db } from "../../db/index.js";
+import { users } from "../../db/schema.js";
+import { eq } from "drizzle-orm";
 
 export interface AuthRequest extends Request {
-  user?: any;
+  user?: {
+    id: string;
+    email: string;
+    role: string;
+  };
 }
 
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -14,13 +22,64 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
   }
 
   const token = authHeader.split("Bearer ")[1];
+
+  // MOCK AUTH FOR LOCAL DEV (optional, can keep for testing)
+  if (process.env.NODE_ENV === "development" && token === "mock-token") {
+    let internalUser = await db.query.users.findFirst({
+        where: eq(users.email, "mock@example.com")
+    });
+
+    if (!internalUser) {
+        const [newUser] = await db.insert(users).values({
+            email: "mock@example.com",
+            passwordHash: "mocked",
+            fullName: "Mock User",
+            role: "ADMIN"
+        }).returning();
+        internalUser = newUser;
+    }
+
+    req.user = {
+        id: internalUser.id,
+        email: internalUser.email,
+        role: internalUser.role,
+    };
+    return next();
+  }
+
   try {
-    const decodedToken = await auth.verifyIdToken(token);
-    req.user = decodedToken;
+    const decoded = jwt.verify(token, config.jwtSecret) as { id: string; email: string; role: string };
+    
+    // Verify user still exists
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, decoded.id)
+    });
+
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized: User not found" });
+      return;
+    }
+
+    req.user = {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+    };
+
     next();
   } catch (error) {
     logger.error("Authentication failed", { error: (error as Error).message });
     res.status(401).json({ error: "Unauthorized: Invalid token" });
     return;
   }
+};
+
+export const requireRole = (roles: string[]) => {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      res.status(403).json({ error: "Forbidden: Insufficient permissions" });
+      return;
+    }
+    next();
+  };
 };

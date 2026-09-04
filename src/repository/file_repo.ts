@@ -1,54 +1,38 @@
-import { db } from "../pkg/firebase/admin.js";
-
-export type AllowedFileType = 
-  | "application/pdf"
-  | "application/msword"
-  | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  | "application/vnd.ms-excel"
-  | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  | "application/vnd.ms-powerpoint"
-  | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-  | "image/png"
-  | "image/jpeg"
-  | "application/zip";
-
-export interface FileMetadata {
-  id?: string;
-  name: string;
-  originalName: string;
-  mimeType: string;
-  sizeBytes: number;
-  projectId: string;
-  taskId?: string; // Optional if attached to a specific task
-  uploadedBy: string; // User ID
-  storagePath: string; // Internal path in bucket
-  createdAt: Date;
-}
+import { db } from "../db/index.js";
+import { files } from "../db/schema.js";
+import { eq, desc } from "drizzle-orm";
 
 export class FileRepository {
-  private collection = db.collection("files");
+  async create(metadata: any): Promise<any> {
+    const [newFile] = await db.insert(files).values({
+      name: metadata.name,
+      originalName: metadata.originalName,
+      mimeType: metadata.mimeType,
+      sizeBytes: metadata.sizeBytes,
+      projectId: metadata.projectId,
+      taskId: metadata.taskId || null,
+      uploadedBy: metadata.uploadedBy,
+      storagePath: metadata.storagePath,
+    }).returning();
+    return newFile;
+  }
 
-  async create(metadata: Omit<FileMetadata, "id" | "createdAt">): Promise<FileMetadata> {
-    const now = new Date();
-    const docRef = await this.collection.add({
-      ...metadata,
-      createdAt: now,
+  async findById(id: string): Promise<any> {
+    const file = await db.query.files.findFirst({
+      where: eq(files.id, id)
     });
-    return { id: docRef.id, ...metadata, createdAt: now };
+    return file || null;
   }
 
-  async findById(id: string): Promise<FileMetadata | null> {
-    const doc = await this.collection.doc(id).get();
-    if (!doc.exists) return null;
-    return { id: doc.id, ...doc.data() } as FileMetadata;
-  }
-
-  async listByProject(projectId: string): Promise<FileMetadata[]> {
-    const snapshot = await this.collection.where("projectId", "==", projectId).orderBy("createdAt", "desc").get();
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as FileMetadata);
+  async listByProject(projectId: string): Promise<any[]> {
+    const allFiles = await db.query.files.findMany({
+      where: eq(files.projectId, projectId),
+      orderBy: [desc(files.createdAt)]
+    });
+    return allFiles;
   }
 
   async delete(id: string): Promise<void> {
-    await this.collection.doc(id).delete();
+    await db.delete(files).where(eq(files.id, id));
   }
 }

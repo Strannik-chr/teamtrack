@@ -1,14 +1,14 @@
 import { Request, Response } from "express";
-import { ProjectRepository, ProjectStatus, ProjectPriority, Project } from "../../repository/project_repo.js";
+import { ProjectRepository, ProjectStatus, ProjectPriority } from "../../repository/project_repo.js";
 import { AuthRequest } from "../middleware/auth.js";
 import { logger } from "../../pkg/logger/logger.js";
 import { calculateDeadlineStatus, DeadlineStatus } from "../../pkg/deadline/deadline.js";
 import { sendNotification } from "../../pkg/notification/service.js";
-import crypto from "crypto";
+import { createProjectSchema, updateProjectSchema, addProjectCommentSchema, setProjectResultSchema } from "../validation/schemas.js";
 
 const repo = new ProjectRepository();
 
-const mapProjectWithDeadline = (project: Project): Project & { deadline_status: DeadlineStatus } => {
+const mapProjectWithDeadline = (project: any): any & { deadline_status: DeadlineStatus } => {
   const isCompleted = project.status === "completed" || project.status === "cancelled";
   return {
     ...project,
@@ -16,51 +16,40 @@ const mapProjectWithDeadline = (project: Project): Project & { deadline_status: 
   };
 };
 
+import { z } from "zod";
+
 export const createProject = async (req: AuthRequest, res: Response) => {
   try {
-    const { name, description, competition_id, url, priority, status, responsible_user_id, members, start_at, deadline_at } = req.body;
-    if (!name) return res.status(400).json({ error: "Name is required" });
+    const validated = createProjectSchema.parse(req.body);
+    
+    // Use the PostgreSQL user ID instead of Firebase UID
+    const ownerId = req.user?.id;
+    if (!ownerId) return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
 
-    const ownerId = req.user?.uid;
-    if (!ownerId) return res.status(401).json({ error: "Unauthorized" });
+    const project = await repo.create(validated, ownerId);
 
-    const initialMembers = Array.isArray(members) ? members : [];
-    if (!initialMembers.includes(ownerId)) {
-      initialMembers.push(ownerId);
+    res.status(201).json({ success: true, data: mapProjectWithDeadline(project) });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: (error as any).errors } });
     }
-
-    const project = await repo.create({
-      name,
-      description: description || "",
-      ownerId,
-      competition_id,
-      url: url || "",
-      status: (status as ProjectStatus) || "new",
-      priority: (priority as ProjectPriority) || "medium",
-      responsible_user_id: responsible_user_id || ownerId,
-      members: initialMembers,
-      start_at: start_at ? new Date(start_at) : undefined,
-      deadline_at: deadline_at ? new Date(deadline_at) : undefined,
-    });
-
-    res.status(201).json(mapProjectWithDeadline(project));
-  } catch (error) {
     logger.error("Failed to create project", { error });
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });
   }
 };
 
 export const listProjects = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user?.uid;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
 
-    // List projects where the user is a member or the owner
-    const projects = await repo.listByMember(userId);
-    res.status(200).json(projects.map(mapProjectWithDeadline));
+    const { status } = req.query;
+
+    const projects = await repo.listByUser(userId, status as string | undefined);
+    res.status(200).json({ success: true, data: projects.map(mapProjectWithDeadline) });
   } catch (error) {
     logger.error("Failed to list projects", { error });
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });
   }
 };
 
@@ -69,18 +58,17 @@ export const getProject = async (req: AuthRequest, res: Response) => {
     const id = req.params.id as string;
     const project = await repo.findById(id);
     
-    if (!project) return res.status(404).json({ error: "Project not found" });
+    if (!project) return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Project not found" } });
 
-    // Simple authorization check
-    const userId = req.user?.uid;
-    if (!project.members.includes(userId!) && project.ownerId !== userId) {
-      return res.status(403).json({ error: "Forbidden" });
+    const userId = req.user?.id;
+    if (!project.members.includes(userId!)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Forbidden" } });
     }
 
-    res.status(200).json(mapProjectWithDeadline(project));
+    res.status(200).json({ success: true, data: mapProjectWithDeadline(project) });
   } catch (error) {
     logger.error("Failed to get project", { error });
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });
   }
 };
 
@@ -89,23 +77,20 @@ export const updateProject = async (req: AuthRequest, res: Response) => {
     const id = req.params.id as string;
     const project = await repo.findById(id);
     
-    if (!project) return res.status(404).json({ error: "Project not found" });
+    if (!project) return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Project not found" } });
 
-    const userId = req.user?.uid;
-    // For Phase 7: Any member can update the project, or just owner? Let's allow members.
-    if (!project.members.includes(userId!) && project.ownerId !== userId) {
-      return res.status(403).json({ error: "Forbidden" });
+    const userId = req.user?.id;
+    const memberRole = project.membersDetails?.find((m: any) => m.userId === userId)?.role;
+    
+    if (!memberRole) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Forbidden" } });
     }
 
-    const updates = req.body;
-    // Security: Do not allow changing ownerId directly through general update
-    delete updates.ownerId; 
-    delete updates.createdAt;
-    delete updates.updatedAt;
-    
-    // Parse dates if provided
-    if (updates.start_at) updates.start_at = new Date(updates.start_at);
-    if (updates.deadline_at) updates.deadline_at = new Date(updates.deadline_at);
+    if (memberRole !== "OWNER" && memberRole !== "MANAGER") {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Forbidden: Only Owner or Manager can update project" } });
+    }
+
+    const updates = updateProjectSchema.parse(req.body);
     
     await repo.update(id, updates);
     const updatedProject = await repo.findById(id);
@@ -125,10 +110,10 @@ export const updateProject = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    res.status(200).json(updatedProject ? mapProjectWithDeadline(updatedProject) : null);
+    res.status(200).json({ success: true, data: updatedProject ? mapProjectWithDeadline(updatedProject) : null });
   } catch (error) {
     logger.error("Failed to update project", { error });
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });
   }
 };
 
@@ -137,50 +122,39 @@ export const deleteProject = async (req: AuthRequest, res: Response) => {
     const id = req.params.id as string;
     const project = await repo.findById(id);
     
-    if (!project) return res.status(404).json({ error: "Project not found" });
+    if (!project) return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Project not found" } });
 
-    const userId = req.user?.uid;
-    // Only owner can delete
+    const userId = req.user?.id;
     if (project.ownerId !== userId) {
-      return res.status(403).json({ error: "Forbidden: Only owner can delete" });
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Forbidden: Only owner can delete" } });
     }
 
     if (project.status === "completed" || project.result) {
-      return res.status(403).json({ error: "Forbidden: Completed projects cannot be deleted, they are kept in history." });
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Forbidden: Completed projects cannot be deleted" } });
     }
 
     await repo.delete(id);
-    res.status(204).send();
+    res.status(200).json({ success: true, data: null });
   } catch (error) {
     logger.error("Failed to delete project", { error });
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });
   }
 };
 
 export const addProjectComment = async (req: AuthRequest, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { text, mentions } = req.body;
-    if (!text) return res.status(400).json({ error: "Comment text is required" });
+    const { text, mentions } = addProjectCommentSchema.parse(req.body);
 
     const project = await repo.findById(id);
-    if (!project) return res.status(404).json({ error: "Project not found" });
+    if (!project) return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Project not found" } });
 
-    const userId = req.user?.uid;
-    if (!project.members.includes(userId!) && project.ownerId !== userId) {
-      return res.status(403).json({ error: "Forbidden" });
+    const userId = req.user?.id;
+    if (!project.members.includes(userId!)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Forbidden" } });
     }
 
-    const newComment = {
-      id: crypto.randomUUID(),
-      userId: userId!,
-      text,
-      mentions: Array.isArray(mentions) ? mentions : [],
-      createdAt: new Date(),
-    };
-
-    const updatedComments = [...(project.comments || []), newComment];
-    await repo.update(id, { comments: updatedComments });
+    const newComment = await repo.addComment(id, userId!, text, mentions);
 
     if (newComment.mentions && newComment.mentions.length > 0) {
       for (const mentionId of newComment.mentions) {
@@ -197,43 +171,33 @@ export const addProjectComment = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    res.status(201).json(newComment);
+    res.status(201).json({ success: true, data: newComment });
   } catch (error) {
     logger.error("Failed to add comment", { error });
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });
   }
 };
 
 export const setProjectResult = async (req: AuthRequest, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { type, prize, amount, result_date, comment, results_url, files } = req.body;
-    
-    if (!type) {
-      return res.status(400).json({ error: "Result type is required" });
-    }
+    const validated = setProjectResultSchema.parse(req.body);
 
     const project = await repo.findById(id);
-    if (!project) return res.status(404).json({ error: "Project not found" });
+    if (!project) return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Project not found" } });
 
-    const userId = req.user?.uid;
-    // Only owner or responsible user can set results (or maybe any member, let's stick to owner/responsible for now, or just member)
-    if (!project.members.includes(userId!) && project.ownerId !== userId) {
-      return res.status(403).json({ error: "Forbidden" });
+    const userId = req.user?.id;
+    const memberRole = project.membersDetails?.find((m: any) => m.userId === userId)?.role;
+    
+    if (!memberRole) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Forbidden" } });
     }
 
-    const result = {
-      type,
-      prize,
-      amount,
-      result_date: result_date ? new Date(result_date) : new Date(),
-      comment,
-      results_url,
-      files: Array.isArray(files) ? files : []
-    };
+    if (memberRole !== "OWNER" && memberRole !== "MANAGER") {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Forbidden: Only Owner or Manager can set result" } });
+    }
 
-    // Updating the project with result and also changing status to completed if it isn't
-    const updates: any = { result };
+    const updates: any = { result: validated };
     if (project.status !== "completed") {
       updates.status = "completed";
     }
@@ -241,7 +205,6 @@ export const setProjectResult = async (req: AuthRequest, res: Response) => {
     await repo.update(id, updates);
     const updatedProject = await repo.findById(id);
 
-    // If status changed to completed, we could send a notification here too (similar to updateProject)
     if (updatedProject && updates.status === "completed") {
       for (const memberId of updatedProject.members) {
         if (memberId !== userId) {
@@ -249,7 +212,7 @@ export const setProjectResult = async (req: AuthRequest, res: Response) => {
             userId: memberId,
             type: "project_completed",
             title: "Project Completed",
-            message: `Project ${updatedProject.name} has been marked as completed with result: ${type}`,
+            message: `Project ${updatedProject.name} has been marked as completed with result: ${validated.type}`,
             referenceId: updatedProject.id,
             referenceType: "project"
           });
@@ -257,9 +220,9 @@ export const setProjectResult = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    res.status(200).json(updatedProject ? mapProjectWithDeadline(updatedProject) : null);
+    res.status(200).json({ success: true, data: updatedProject ? mapProjectWithDeadline(updatedProject) : null });
   } catch (error) {
     logger.error("Failed to set project result", { error });
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });
   }
 };

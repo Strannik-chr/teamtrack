@@ -1,32 +1,24 @@
-import { db } from "../pkg/firebase/admin.js";
-
-export interface User {
-  uid: string;
-  email: string;
-  displayName: string;
-  role: "ADMIN" | "MANAGER" | "MEMBER" | "VIEWER";
-  createdAt: Date;
-}
+import { db } from "../db/index.js";
+import { users } from "../db/schema.js";
+import { eq } from "drizzle-orm";
 
 export class UserRepository {
-  private collection = db.collection("users");
-
-  async createOrUpdate(user: User): Promise<User> {
-    await this.collection.doc(user.uid).set({
-      ...user,
-      createdAt: user.createdAt || new Date(),
-    }, { merge: true });
-    return user;
+  async findByEmail(email: string): Promise<any> {
+    const user = await db.query.users.findFirst({
+      where: eq(users.email, email)
+    });
+    return user || null;
   }
 
-  async findById(uid: string): Promise<User | null> {
-    const doc = await this.collection.doc(uid).get();
-    if (!doc.exists) return null;
-    return doc.data() as User;
+  async findById(id: string): Promise<any> {
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, id)
+    });
+    return user || null;
   }
 
-  async listAll(): Promise<User[]> {
-    const snapshot = await this.collection.get();
-    return snapshot.docs.map(doc => doc.data() as User);
+  async listAll(): Promise<any[]> {
+    const allUsers = await db.query.users.findMany();
+    return allUsers;
   }
 }

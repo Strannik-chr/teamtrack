@@ -1,7 +1,6 @@
 import { ScrapedData } from "../types.js";
-import { Competition } from "../../../repository/competition_repo.js";
 
-export const normalize = (data: ScrapedData): Omit<Competition, "id" | "created_at" | "updated_at"> => {
+export const normalize = (data: ScrapedData): any => {
   return {
     title: data.title.trim(),
     organizer: data.organizer.trim(),

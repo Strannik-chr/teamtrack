@@ -8,8 +8,13 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@/*": ["./src/client/*"]
+    }
   },
-  "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["server.ts", "src/api/**/*", "src/db/**/*", "src/pkg/**/*", "src/repository/**/*"],
+  "exclude": ["node_modules", "dist", "src/client/**/*"]
 }
