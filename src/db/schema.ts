@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, pgEnum, primaryKey, jsonb, boolean, integer } from "drizzle-orm/pg-core";
+import { pgTable, uuid, varchar, text, timestamp, pgEnum, primaryKey, jsonb, boolean, integer, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
 export const projectRoleEnum = pgEnum("project_role", ["OWNER", "MANAGER", "MEMBER"]);
@@ -6,7 +6,6 @@ export const projectStatusEnum = pgEnum("project_status", ["new", "preparation",
 export const projectPriorityEnum = pgEnum("project_priority", ["high", "medium", "low"]);
 export const taskStatusEnum = pgEnum("task_status", ["TODO", "IN_PROGRESS", "REVIEW", "DONE"]);
 export const taskPriorityEnum = pgEnum("task_priority", ["high", "medium", "low"]);
-
 export const globalRoleEnum = pgEnum("global_role", ["ADMIN", "USER"]);
 
 export const users = pgTable("users", {
@@ -19,11 +18,31 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const competitions = pgTable("competitions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  organizer: varchar("organizer", { length: 255 }),
+  type: varchar("type", { length: 50 }).default("other").notNull(), // Switched from enum due to scraper issues
+  url: varchar("url", { length: 2048 }),
+  source: varchar("source", { length: 100 }),
+  sourceId: varchar("source_id", { length: 100 }),
+  deadline: timestamp("deadline"),
+  startAt: timestamp("start_at"),
+  resultAt: timestamp("result_at"),
+  prizeFund: varchar("prize_fund", { length: 255 }),
+  status: varchar("status", { length: 50 }).default("published").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  sourceIdIdx: uniqueIndex("source_id_idx").on(table.sourceId),
+}));
+
 export const projects = pgTable("projects", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
-  competitionId: varchar("competition_id", { length: 255 }), // Can link to competitions.id or external
+  competitionId: uuid("competition_id").references(() => competitions.id, { onDelete: "set null" }), 
   url: varchar("url", { length: 2048 }),
   status: projectStatusEnum("status").default("new").notNull(),
   priority: projectPriorityEnum("priority").default("medium").notNull(),
@@ -33,7 +52,10 @@ export const projects = pgTable("projects", {
   result: jsonb("result"), // Storing project result details as JSONB for flexibility
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  competitionIdIdx: index("competition_id_idx").on(table.competitionId),
+  responsibleUserIdIdx: index("responsible_user_id_idx").on(table.responsibleUserId),
+}));
 
 export const projectComments = pgTable("project_comments", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -105,23 +127,6 @@ export const files = pgTable("files", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const competitions = pgTable("competitions", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  title: varchar("title", { length: 255 }).notNull(),
-  description: text("description"),
-  organizer: varchar("organizer", { length: 255 }),
-  type: competitionTypeEnum("type").default("other").notNull(),
-  url: varchar("url", { length: 2048 }),
-  source: varchar("source", { length: 100 }),
-  sourceId: varchar("source_id", { length: 100 }),
-  deadline: timestamp("deadline"),
-  startAt: timestamp("start_at"),
-  resultAt: timestamp("result_at"),
-  prizeFund: varchar("prize_fund", { length: 255 }),
-  status: competitionStatusEnum("status").default("published").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
 
 export const usersRelations = relations(users, ({ many }) => ({
   projectMembers: many(projectMembers),

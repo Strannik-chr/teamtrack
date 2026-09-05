@@ -16,3 +16,5 @@ Never implement future phases.
 Never create files that are not required by the current task.
 
 Never rewrite working code without a demonstrated reason.
+
+Always communicate with the user in Russian (Всегда говори на русском).

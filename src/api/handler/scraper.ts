@@ -1,10 +1,14 @@
 import { Request, Response } from "express";
 import { runScheduledScraping } from "../../pkg/scraper/scheduler/index.js";
 import { logger } from "../../pkg/logger/logger.js";
+import { AuthRequest } from "../middleware/auth.js";
 
-export const triggerScraper = async (req: Request, res: Response) => {
+export const triggerScraper = async (req: AuthRequest, res: Response) => {
   try {
-    // In production, protect this endpoint (e.g. secret token header or GCP cron auth)
+    if (req.user?.role !== "ADMIN") {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Only ADMIN can trigger the scraper" } });
+    }
+
     const result = await runScheduledScraping();
     res.status(200).json(result);
   } catch (error) {

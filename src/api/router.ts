@@ -126,7 +126,9 @@ export const createRouter = () => {
   router.post("/api/v1/notifications/cron/deadlines", triggerDeadlineChecks); // internal cron endpoint
 
   // Scraper (Phase 15)
-  router.post("/api/v1/scraper/trigger", triggerScraper); // internal endpoint
+  // Protected endpoint - only ADMIN can trigger
+  router.post("/api/v1/scraper/trigger", requireAuth, triggerScraper);
+
 
   return router;
 };

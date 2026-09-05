@@ -1,3 +1,5 @@
+# DEPRECATION WARNING: This document mentions Go and Flutter, but the actual project has been built using Node.js, Express, TypeScript, React, PostgreSQL, and Drizzle ORM.
+
 # TeamTrack — Architecture
 
 ## 1. Назначение

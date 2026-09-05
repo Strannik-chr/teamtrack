@@ -23,30 +23,6 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
 
   const token = authHeader.split("Bearer ")[1];
 
-  // MOCK AUTH FOR LOCAL DEV (optional, can keep for testing)
-  if (process.env.NODE_ENV === "development" && token === "mock-token") {
-    let internalUser = await db.query.users.findFirst({
-        where: eq(users.email, "mock@example.com")
-    });
-
-    if (!internalUser) {
-        const [newUser] = await db.insert(users).values({
-            email: "mock@example.com",
-            passwordHash: "mocked",
-            fullName: "Mock User",
-            role: "ADMIN"
-        }).returning();
-        internalUser = newUser;
-    }
-
-    req.user = {
-        id: internalUser.id,
-        email: internalUser.email,
-        role: internalUser.role,
-    };
-    return next();
-  }
-
   try {
     const decoded = jwt.verify(token, config.jwtSecret) as { id: string; email: string; role: string };
     

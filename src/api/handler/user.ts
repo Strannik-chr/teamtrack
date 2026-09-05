@@ -5,14 +5,19 @@ import { logger } from "../../pkg/logger/logger.js";
 
 const repo = new UserRepository();
 
+const sanitizeUser = (user: any) => {
+  if (!user) return user;
+  const { passwordHash, ...safeUser } = user;
+  return safeUser;
+};
+
 export const getMe = async (req: AuthRequest, res: Response) => {
   try {
     const id = req.user?.id;
     if (!id) return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
 
     const user = await repo.findById(id);
-
-    res.status(200).json({ success: true, data: user });
+    res.status(200).json({ success: true, data: sanitizeUser(user) });
   } catch (error) {
     logger.error("Failed to get current user", { error });
     res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });
@@ -21,9 +26,9 @@ export const getMe = async (req: AuthRequest, res: Response) => {
 
 export const listUsers = async (req: AuthRequest, res: Response) => {
   try {
-    // In a real scenario, check if req.user has MANAGER/ADMIN role
     const users = await repo.listAll();
-    res.status(200).json({ success: true, data: users });
+    const safeUsers = users.map(sanitizeUser);
+    res.status(200).json({ success: true, data: safeUsers });
   } catch (error) {
     logger.error("Failed to list users", { error });
     res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: "Internal server error" } });

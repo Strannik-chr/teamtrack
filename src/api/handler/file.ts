@@ -6,18 +6,12 @@ import { logger } from "../../pkg/logger/logger.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import jwt from "jsonwebtoken";
+import { config } from "../../config/config.js";
 import { generateUploadUrl, generateDownloadUrl } from "../../pkg/storage/s3.js";
 
 const fileRepo = new FileRepository();
 const projectRepo = new ProjectRepository();
-
-// Local fallback store for tokens if S3 is not configured in dev
-const uploadTokens = new Map<string, {
-  projectId: string;
-  taskId?: string;
-  userId: string;
-  expiresAt: number;
-}>();
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 const ALLOWED_TYPES = [
@@ -83,14 +77,12 @@ export const generatePresignedUrl = async (req: AuthRequest, res: Response) => {
         storagePath: objectKey
       });
     } else {
-      // Local development fallback
-      const token = crypto.randomBytes(32).toString("hex");
-      uploadTokens.set(token, {
+      // Local development fallback using stateless JWT
+      const token = jwt.sign({
         projectId,
         taskId,
-        userId: userId,
-        expiresAt: Date.now() + 15 * 60 * 1000
-      });
+        userId
+      }, config.jwtSecret, { expiresIn: '15m' });
       uploadUrl = `/api/v1/files/upload/${token}`;
     }
 
@@ -105,12 +97,14 @@ export const handleUpload = async (req: Request, res: Response) => {
   // Only used for local dev fallback
   try {
     const token = req.params.token as string;
-    const tokenData = uploadTokens.get(token);
     
-    if (!tokenData || tokenData.expiresAt < Date.now()) {
+    let tokenData: { projectId: string; taskId?: string; userId: string };
+    try {
+      tokenData = jwt.verify(token, config.jwtSecret) as { projectId: string; taskId?: string; userId: string };
+    } catch (e) {
       return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Invalid or expired upload token" } });
     }
-
+    
     const file = req.file;
     if (!file) {
       return res.status(400).json({ success: false, error: { code: "BAD_REQUEST", message: "No file uploaded" } });
@@ -138,8 +132,6 @@ export const handleUpload = async (req: Request, res: Response) => {
       uploadedBy: tokenData.userId,
       storagePath: file.path
     });
-
-    uploadTokens.delete(token);
 
     res.status(201).json({ success: true, data: metadata });
   } catch (error) {
